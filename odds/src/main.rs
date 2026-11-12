@@ -344,18 +344,31 @@ fn side_ui(ui: &mut egui::Ui, id: &str, s: &mut Side) {
         ui.add(DragValue::new(&mut s.skill).range(0..=999));
         ui.end_row();
         ui.label("Flat modifier");
-        ui.add(DragValue::new(&mut s.flat).range(-999..=999).custom_formatter(|v, _| format!("{v:+}")));
+        stepper(ui, &mut s.flat, 10, |v| format!("{v:+}"));
         ui.end_row();
         ui.label("SL modifier");
-        ui.add(DragValue::new(&mut s.sl).range(-99..=99).speed(0.05).custom_formatter(|v, _| format!("{v:+}")));
+        stepper(ui, &mut s.sl, 1, |v| format!("{v:+}"));
         ui.end_row();
         ui.label("Advantage");
-        ui.add(DragValue::new(&mut s.adv).range(-9..=9).speed(0.05).custom_formatter(|v, _| adv_name(v as i32)))
-            .on_hover_text("Negative is Disadvantage");
+        stepper(ui, &mut s.adv, 1, adv_name); // up towards Advantage, down towards Disadvantage
         ui.end_row();
         ui.label("Target");
         ui.label(s.target().to_string());
         ui.end_row();
+    });
+}
+
+/// − value +, one `step` a click. The value is a fixed width, so + stays put under repeated clicks.
+fn stepper(ui: &mut egui::Ui, v: &mut i32, step: i32, show: fn(i32) -> String) {
+    ui.horizontal(|ui| {
+        let size = egui::Vec2::splat(ui.spacing().interact_size.y);
+        if ui.add(egui::Button::new("−").min_size(size)).clicked() {
+            *v -= step;
+        }
+        ui.add_sized([120.0, size.y], egui::Label::new(show(*v))); // fits "9 Disadvantage"
+        if ui.add(egui::Button::new("+").min_size(size)).clicked() {
+            *v += step;
+        }
     });
 }
 
