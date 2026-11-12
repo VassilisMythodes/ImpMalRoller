@@ -272,6 +272,14 @@ struct App {
     results: Results,
 }
 
+impl App {
+    /// The default inputs, already generated.
+    fn new() -> Self {
+        let inputs = Inputs::default();
+        App { inputs, results: Results::new(inputs) }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
         egui::Panel::left("inputs").show(ui, |ui| {
@@ -431,10 +439,31 @@ fn results_ui(ui: &mut egui::Ui, r: &Results) {
     });
 }
 
+/// Desktop: a native window.
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
-    let inputs = Inputs::default();
     let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 760.0]), ..Default::default() };
-    eframe::run_native("d100 Test Odds", options, Box::new(move |_| Ok(Box::new(App { inputs, results: Results::new(inputs) }))))
+    eframe::run_native("d100 Test Odds", options, Box::new(|_| Ok(Box::new(App::new()))))
+}
+
+/// Browser (built with Trunk): the same app, drawn on the canvas in index.html.
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use eframe::wasm_bindgen::JsCast as _;
+
+    wasm_bindgen_futures::spawn_local(async {
+        let document = web_sys::window().and_then(|w| w.document()).expect("no document");
+        let canvas = document.get_element_by_id("the_canvas_id").and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+        let canvas = canvas.expect("index.html has no <canvas id=\"the_canvas_id\">");
+        let started = eframe::WebRunner::new().start(canvas, eframe::WebOptions::default(), Box::new(|_| Ok(Box::new(App::new())))).await;
+        // index.html shows "Loading…" until now: remove it, or say why nothing appeared.
+        if let Some(loading) = document.get_element_by_id("loading_text") {
+            match started {
+                Ok(()) => loading.remove(),
+                Err(e) => loading.set_text_content(Some(&format!("The app could not start in this browser: {e:?}"))),
+            }
+        }
+    });
 }
 
 #[cfg(test)]

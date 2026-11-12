@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <!-- The app does its own zooming, so the browser should not pinch-zoom the page. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>d100 Test Odds</title>
+
+    <!-- Trunk compiles the crate in this folder to WebAssembly and puts the script that loads it here. -->
+    <link data-trunk rel="rust" data-wasm-opt="2">
+
+    <style>
+        /* The page is only a frame for the app: no margins, no scrolling. Colours match the app's own background. */
+        html, body { margin: 0; height: 100%; overflow: hidden; background: #f8f8f8; touch-action: manipulation; }
+        canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+        #loading_text {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            max-width: 80%; text-align: center; font: 16px system-ui, sans-serif; color: #606060;
+        }
+        @media (prefers-color-scheme: dark) {
+            html, body { background: #1b1b1b; }
+            #loading_text { color: #a0a0a0; }
+        }
+    </style>
+</head>
+<body>
+    <!-- main.rs finds these two by id: it draws on the canvas, and removes the text once the app is running. -->
+    <canvas id="the_canvas_id"></canvas>
+    <div id="loading_text">Loading…<noscript><br>This app needs JavaScript.</noscript></div>
+</body>
+</html>

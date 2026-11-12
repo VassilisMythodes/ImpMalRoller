@@ -1,0 +1,64 @@
+# Builds the app for the browser and publishes it to GitHub Pages on every push.
+# One-time setup: repo Settings -> Pages -> Source: "GitHub Actions".
+name: Deploy web app
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: # also allows a manual run from the Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push waits for the running one instead of cancelling it.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # Folder that holds Cargo.toml and index.html, relative to the repo root.
+  APP_DIR: odds
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # First, so a repo without Pages switched on fails here and not after the build.
+      - uses: actions/configure-pages@v5
+
+      - name: Install Rust's WebAssembly target
+        working-directory: ${{ env.APP_DIR }}
+        run: |
+          rustup update stable
+          rustup default stable
+          rustup target add wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.APP_DIR }}
+
+      - name: Install Trunk
+        run: curl -sSfL https://github.com/trunk-rs/trunk/releases/latest/download/trunk-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C "$HOME/.cargo/bin"
+
+      # The relative public URL makes dist/ work at any address: Pages, itch.io, or any other static host.
+      - name: Build
+        working-directory: ${{ env.APP_DIR }}
+        run: trunk build --release --public-url ./
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ env.APP_DIR }}/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
