@@ -4,8 +4,8 @@ from constants import BOT_TOKEN
 import discord
 from discord import app_commands
 
-from rolls import Participant, build_opposed_result, build_test_result
-from roll_ui import MAX_ADVANTAGE, RollSetupView, log_expired_interaction, result_message
+from rolls import Participant
+from roll_ui import MAX_ADVANTAGE, FateView, RollSetupView, log_expired_interaction
 
 
 class MyClient(discord.Client):
@@ -71,7 +71,7 @@ async def im_test(
         await view.start(interaction)
         return
 
-    await interaction.response.send_message(**result_message(build_test_result(your, comment)))
+    await FateView(interaction.user.id, your, comment=comment).send(interaction)
 
 @client.tree.command(description="Imperium Maledictum Opposed Test, highest SL wins; leave a skill blank for guided setup.")
 @app_commands.describe(
@@ -136,7 +136,7 @@ async def im_opposed(
         await view.start(interaction)
         return
 
-    await interaction.response.send_message(**result_message(build_opposed_result(your, opponent, comment)))
+    await FateView(interaction.user.id, your, opponent, comment).send(interaction)
 
 
 if __name__ == '__main__':

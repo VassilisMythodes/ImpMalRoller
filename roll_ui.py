@@ -1,11 +1,13 @@
 """Private, guided Discord forms for preparing a roll."""
 
+from dataclasses import replace
 import logging
+import random
 from typing import Optional
 
 import discord
 
-from rolls import Participant, build_opposed_result, build_test_result
+from rolls import Participant, build_opposed_result, build_test_result, resolve_test
 
 
 log = logging.getLogger(__name__)
@@ -254,6 +256,7 @@ class RollSetupView(discord.ui.View):
         self.finished = False
         if opponent is None:
             self.remove_item(self.edit_opponent)
+            self.remove_item(self.opponent_fate)
         self.roll_button.disabled = not self.ready
 
     @property
@@ -299,6 +302,8 @@ class RollSetupView(discord.ui.View):
             f"Advantage: **{participant.advantage}** | Disadvantage: **{participant.disadvantage}** | "
             f"Target: **{participant.target}**"
         )
+        if participant.fate_advantage:
+            lines.append("Spending Fate to gain Advantage")
         lines.append("Roll: random d100" if participant.roll is None else f"Manual roll: **{participant.roll}**")
         return "\n".join(lines)
 
@@ -349,20 +354,28 @@ class RollSetupView(discord.ui.View):
     async def edit_advanced(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AdvancedModal(self))
 
-    @discord.ui.button(label="Roll", style=discord.ButtonStyle.success, row=1)
+    # Fate's Advantage must be spent before rolling; green while spent, press again to take it back.
+    @discord.ui.button(label="Your Fate: Advantage", style=discord.ButtonStyle.secondary, row=1)
+    async def your_fate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.your.fate_advantage = not self.your.fate_advantage
+        button.style = discord.ButtonStyle.success if self.your.fate_advantage else discord.ButtonStyle.secondary
+        await self.show_panel(interaction)
+
+    @discord.ui.button(label="Opponent Fate: Advantage", style=discord.ButtonStyle.secondary, row=1)
+    async def opponent_fate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.opponent.fate_advantage = not self.opponent.fate_advantage
+        button.style = discord.ButtonStyle.success if self.opponent.fate_advantage else discord.ButtonStyle.secondary
+        await self.show_panel(interaction)
+
+    @discord.ui.button(label="Roll", style=discord.ButtonStyle.success, row=2)
     async def roll_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.submit_roll(interaction)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=2)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.finished = True
         self.stop()
         await interaction.response.edit_message(content="Test cancelled.", embed=None, view=None)
-
-    def result(self) -> str:
-        if self.opponent is None:
-            return build_test_result(self.your, self.comment)
-        return build_opposed_result(self.your, self.opponent, self.comment)
 
     async def submit_roll(self, interaction: discord.Interaction):
         if not await self.interaction_check(interaction):
@@ -373,9 +386,7 @@ class RollSetupView(discord.ui.View):
         # Set before the first await so double clicks cannot publish two rolls.
         self.finished = True
         try:
-            await interaction.response.send_message(
-                **result_message(self.result()), ephemeral=False, allowed_mentions=discord.AllowedMentions.none()
-            )
+            await FateView(self.owner_id, self.your, self.opponent, self.comment).send(interaction)
         except Exception:
             self.finished = False
             raise
@@ -409,3 +420,84 @@ class RollSetupView(discord.ui.View):
         except discord.NotFound as response_error:
             if not log_expired_interaction(interaction, response_error):
                 raise
+
+
+class FateButton(discord.ui.Button):
+    def __init__(self, participant: Participant, reroll: bool, row: int):
+        # Labels are capped at 80 characters.
+        super().__init__(label=f"{participant.name[:60]}: Fate {'reroll' if reroll else '+1 SL'}", row=row)
+        self.participant = participant
+        self.reroll = reroll
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        # Anyone may be playing the opponent, so only the roller's own side is locked to them.
+        if self.participant is self.view.your and interaction.user.id != self.view.owner_id:
+            name = discord.utils.escape_markdown(self.participant.name)
+            await interaction.response.send_message(f"Only the person who rolled can spend Fate for {name}.", ephemeral=True)
+            return False
+        return True
+
+    async def callback(self, interaction: discord.Interaction):
+        participant = self.participant
+        before = participant.roll, participant.rerolls, participant.fate_sl
+        if self.reroll:
+            participant.rerolls += (participant.roll,)
+            participant.roll = random.randint(1, 100)
+        else:
+            participant.fate_sl += 1
+        try:
+            await interaction.response.edit_message(**self.view.refresh())
+        except Exception:
+            # Nobody saw this spend, so take it back.
+            participant.roll, participant.rerolls, participant.fate_sl = before
+            self.view.refresh()
+            raise
+        self.view.interaction = interaction
+
+
+class FateView(discord.ui.View):
+    """A posted result with buttons to Spend Fate on each Test after it is rolled."""
+
+    def __init__(
+        self, owner_id: int, your: Participant, opponent: Optional[Participant] = None,
+        comment: Optional[str] = None,
+    ):
+        # Under Discord's 15-minute limit for editing a reply, so the buttons can be removed.
+        super().__init__(timeout=SETUP_TIMEOUT)
+        self.owner_id = owner_id
+        # Keep the dice so +1 SL adjusts this roll; copies leave the setup as it was if posting fails.
+        self.your = replace(your, roll=your.roll or random.randint(1, 100))
+        self.opponent = None if opponent is None else replace(opponent, roll=opponent.roll or random.randint(1, 100))
+        self.comment = comment
+        self.interaction = None
+        for row, participant in enumerate(p for p in (self.your, self.opponent) if p is not None):
+            self.add_item(FateButton(participant, True, row)).add_item(FateButton(participant, False, row))
+
+    def refresh(self) -> dict:
+        """Match the buttons to the current results and return the message to show."""
+        for button in self.children:
+            # Only a failed Test can be rerolled.
+            button.disabled = button.reroll and resolve_test(button.participant)["success"]
+        if self.opponent is None:
+            output = build_test_result(self.your, self.comment)
+        else:
+            output = build_opposed_result(self.your, self.opponent, self.comment)
+        # Clear whichever of content or embed an earlier, shorter or longer, version used.
+        return {
+            "content": None, "embed": None, **result_message(output), "view": self,
+            "allowed_mentions": discord.AllowedMentions.none(),
+        }
+
+    async def send(self, interaction: discord.Interaction):
+        await interaction.response.send_message(**self.refresh())
+        self.interaction = interaction
+
+    async def on_timeout(self):
+        try:
+            await self.interaction.edit_original_response(view=None)
+        except discord.HTTPException:
+            pass  # The result may have been deleted.
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item):
+        if not log_expired_interaction(interaction, error):
+            await super().on_error(interaction, error, item)

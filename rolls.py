@@ -15,11 +15,15 @@ class Participant:
     disadvantage: int = 0
     roll: Optional[int] = None
     skill_name: str = ""
+    # Fate spent: Advantage before rolling, then rerolls (the rolls they replaced) and +1 SL each.
+    fate_advantage: bool = False
+    rerolls: tuple[int, ...] = ()
+    fate_sl: int = 0
 
     @property
     def net_advantage(self) -> int:
-        """Advantage and Disadvantage cancel each other out 1:1; below 0 means Disadvantage."""
-        return self.advantage - self.disadvantage
+        """Advantage (one may come from Fate) and Disadvantage cancel each other out 1:1; below 0 means Disadvantage."""
+        return self.advantage + self.fate_advantage - self.disadvantage
 
     @property
     def target(self) -> int:
@@ -43,8 +47,9 @@ def resolve_test(participant: Participant) -> dict:
     # Tens values: a target of 72 gives 7, 150 gives 15, and a roll of 100 gives 10.
     sl = target // 10 - roll // 10
     success = roll <= target
-    if participant.sl_adjustment:
-        sl += participant.sl_adjustment
+    # Not summed first: an adjustment of -1 and +1 from Fate still land on 0, which is never -0.
+    if participant.sl_adjustment or participant.fate_sl:
+        sl += participant.sl_adjustment + participant.fate_sl
         # Adjustments can flip the result, and one that lands on 0 is a Marginal Success (+0).
         success = sl >= 0
     # Doubles read the same reversed; a successful one is a critical and a failed one a fumble.
@@ -77,10 +82,14 @@ def format_test_result(participant: Participant, results: dict) -> str:
     reversal = f", reversed to **{results['roll']}**," if results["roll"] != results["rolled"] else ""
     skill_suffix = f" on **{participant.skill_name}**" if participant.skill_name else ""
     double = (" **Critical!**" if results["success"] else " **Fumble!**") if results["double"] else ""
+    fate = (["Advantage"] if participant.fate_advantage else []) + [
+        f"rerolled **{roll}**" for roll in participant.rerolls
+    ] + ["+1 SL"] * participant.fate_sl
+    fate_suffix = f"\nFate spent: **{len(fate)}** ({', '.join(fate)})" if fate else ""
     return (
         f"\n**{participant.name}** rolled: **{results['rolled']}**{reversal} with a target of "
         f"**{results['target']}**{details_suffix}"
-        f"\n{format_sl(results['sl'], results['success'])}{skill_suffix}!{double}"
+        f"\n{format_sl(results['sl'], results['success'])}{skill_suffix}!{double}{fate_suffix}"
     )
 
 

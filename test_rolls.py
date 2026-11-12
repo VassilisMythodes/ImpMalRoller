@@ -84,6 +84,18 @@ class SuccessLevelTests(unittest.TestCase):
         self.assertTrue(build_test_result(Participant("Ana", 54, roll=44)).endswith("! **Critical!**"))
         self.assertTrue(build_test_result(Participant("Ana", 54, roll=55)).endswith("! **Fumble!**"))
 
+    def test_fate(self):
+        self.check([
+            (dict(skill=54, fate_advantage=True, roll=62), (26, 54)),                # Fate's Advantage reverses the dice...
+            (dict(skill=54, advantage=1, fate_advantage=True, roll=62), (26, 64)),   # ...and stacks with other Advantage
+        ], "roll", "target")
+        self.check([
+            (dict(skill=54, fate_sl=1, roll=57), (1, True)),                     # +1 SL can turn -0 into a success
+            (dict(skill=54, sl_adjustment=-1, fate_sl=1, roll=57), (0, True)),   # -0, -1, then +1 lands on 0
+        ], "sl", "success")
+        message = build_test_result(Participant("Ana", 54, roll=62, fate_advantage=True, rerolls=(88,), fate_sl=1))
+        self.assertTrue(message.endswith("\nFate spent: **3** (Advantage, rerolled **88**, +1 SL)"), message)
+
     def test_opposed_verdicts(self):
         cases = [
             # Rulebook example: -1 SL beats -3 SL by 2 SL, though both Tests fail.
