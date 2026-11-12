@@ -155,7 +155,7 @@ enum Field {
     Adv,
 }
 
-/// A modifier of either side to vary, 3 steps either way.
+/// A modifier of either side to vary: 10 steps either way for SL, 3 for the others.
 #[derive(Clone, Copy, PartialEq)]
 struct Knob {
     opponent: bool,
@@ -244,7 +244,8 @@ impl Results {
             }
             Some(knob) => {
                 let now = knob.of(inputs);
-                let sweep: Vec<_> = (-3..=3)
+                let reach = if knob.field == Field::Sl { 10 } else { 3 };
+                let sweep: Vec<_> = (-reach..=reach)
                     .map(|d| {
                         let mut i = inputs;
                         *knob.get(&mut i) = now + d * knob.step();
@@ -588,7 +589,7 @@ mod tests {
     #[test]
     fn sweep_varies_the_chosen_side() {
         let r = Results::new(Inputs { vary: Some(Knob { opponent: true, field: Field::Sl }), ..Inputs::default() });
-        assert_eq!(r.sweep[3].0, 2); // centred on the opponent's +2 SL
-        assert!(r.sweep.windows(2).all(|w| w[0].1[2] < w[1].1[2])); // more SL for them, more wins for them
+        assert_eq!(r.sweep.iter().map(|s| s.0).collect::<Vec<_>>(), (-8..=12).collect::<Vec<_>>()); // 10 SL either way of the opponent's +2
+        assert!(r.sweep.windows(2).all(|w| w[0].1[2] <= w[1].1[2])); // more SL for them, more wins for them, up to all of them
     }
 }
