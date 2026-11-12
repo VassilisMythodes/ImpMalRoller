@@ -273,16 +273,34 @@ struct App {
 }
 
 impl App {
-    /// The default inputs, already generated.
-    fn new() -> Self {
+    /// The default inputs, already generated, in this app's style.
+    fn new(ctx: &egui::Context) -> Self {
+        style(ctx);
         let inputs = Inputs::default();
         App { inputs, results: Results::new(inputs) }
     }
 }
 
+/// STIX Two Text, larger text, and roomier widgets than egui's defaults.
+fn style(ctx: &egui::Context) {
+    use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
+    let stix = egui::FontData::from_static(include_bytes!("../../STIXTwoText/static/STIXTwoText-Regular.ttf"));
+    // First choice for proportional text, which is all of this app's; egui's own fonts stay behind it for any symbol STIX lacks.
+    let family = InsertFontFamily { family: egui::FontFamily::Proportional, priority: FontPriority::Highest };
+    ctx.add_font(FontInsert::new("STIX Two Text", stix, vec![family]));
+    ctx.all_styles_mut(|s| {
+        s.text_styles.values_mut().for_each(|font| font.size *= 1.4);
+        s.spacing.item_spacing = egui::vec2(12.0, 8.0);
+        s.spacing.button_padding = egui::vec2(10.0, 5.0);
+        s.spacing.interact_size = egui::vec2(64.0, 32.0); // smallest number field, button and row
+        s.spacing.icon_width = 18.0; // checkbox, to match the text
+        s.spacing.icon_width_inner = 10.0;
+    });
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _: &mut eframe::Frame) {
-        egui::Panel::left("inputs").show(ui, |ui| {
+        egui::Panel::left("inputs").frame(egui::Frame::side_top_panel(ui.style()).inner_margin(16)).show(ui, |ui| {
             let i = &mut self.inputs;
             ui.checkbox(&mut i.opposed, "Opposed Test");
             ui.heading("You");
@@ -314,7 +332,8 @@ impl eframe::App for App {
                 ui.weak("Inputs changed: click Generate.");
             }
         });
-        egui::CentralPanel::default().show(ui, |ui| egui::ScrollArea::vertical().show(ui, |ui| results_ui(ui, &self.results)));
+        let frame = egui::Frame::central_panel(ui.style()).inner_margin(16);
+        egui::CentralPanel::default().frame(frame).show(ui, |ui| egui::ScrollArea::vertical().show(ui, |ui| results_ui(ui, &self.results)));
     }
 }
 
@@ -377,7 +396,7 @@ fn results_ui(ui: &mut egui::Ui, r: &Results) {
 
     let (good, bad) = if i.opposed { ("You win", "Opponent wins") } else { ("Success", "Failure") };
     let plot = Plot::new("plot")
-        .height(320.0)
+        .height(400.0)
         .legend(Legend::default())
         .y_axis_label("Chance (%)")
         .allow_drag(false)
@@ -399,7 +418,7 @@ fn results_ui(ui: &mut egui::Ui, r: &Results) {
                     false => String::new(),
                 });
             let top = r.chances.values().fold(0.0, |a: f64, c| a.max(c.all));
-            let plot = plot.include_y(130.0 * top); // headroom so the legend clears the bars
+            let plot = plot.include_y(160.0 * top); // headroom so the legend clears the bars
             plot.custom_x_axes(vec![x_axis]).x_grid_spacer(uniform_grid_spacer(|_| [1.0, 5.0, 10.0])).show(ui, |p| {
                 p.bar_chart(chart(bad, RED, layer(&r.chances, 2, |k| k < 0)));
                 if i.opposed {
@@ -429,13 +448,18 @@ fn results_ui(ui: &mut egui::Ui, r: &Results) {
             ui.ctx().copy_text(r.table.iter().map(|row| row.join("\t")).collect::<Vec<_>>().join("\n"));
         }
     });
-    egui::Grid::new("table").striped(true).show(ui, |ui| {
-        for (n, row) in r.table.iter().enumerate() {
-            for cell in row {
-                if n == 0 { ui.strong(cell) } else { ui.label(cell) };
+    // Scrolls sideways in a narrow window. The grid is keyed on its contents because centred cells fill
+    // their column, so a column would never shrink back after the table changes.
+    egui::ScrollArea::horizontal().show(ui, |ui| {
+        egui::Grid::new(&r.table).striped(true).spacing([32.0, 8.0]).show(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend); // no wrapping: a column is as wide as its widest cell
+            for (n, row) in r.table.iter().enumerate() {
+                for cell in row {
+                    ui.vertical_centered(|ui| if n == 0 { ui.strong(cell) } else { ui.label(cell) });
+                }
+                ui.end_row();
             }
-            ui.end_row();
-        }
+        })
     });
 }
 
@@ -443,7 +467,7 @@ fn results_ui(ui: &mut egui::Ui, r: &Results) {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([1000.0, 760.0]), ..Default::default() };
-    eframe::run_native("d100 Test Odds", options, Box::new(|_| Ok(Box::new(App::new()))))
+    eframe::run_native("d100 Test Odds", options, Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx)))))
 }
 
 /// Browser (built with Trunk): the same app, drawn on the canvas in index.html.
@@ -455,7 +479,7 @@ fn main() {
         let document = web_sys::window().and_then(|w| w.document()).expect("no document");
         let canvas = document.get_element_by_id("the_canvas_id").and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
         let canvas = canvas.expect("index.html has no <canvas id=\"the_canvas_id\">");
-        let started = eframe::WebRunner::new().start(canvas, eframe::WebOptions::default(), Box::new(|_| Ok(Box::new(App::new())))).await;
+        let started = eframe::WebRunner::new().start(canvas, eframe::WebOptions::default(), Box::new(|cc| Ok(Box::new(App::new(&cc.egui_ctx))))).await;
         // index.html shows "Loading…" until now: remove it, or say why nothing appeared.
         if let Some(loading) = document.get_element_by_id("loading_text") {
             match started {
